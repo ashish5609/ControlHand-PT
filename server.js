@@ -78,8 +78,13 @@ function getLocalIPAddress() {
   return ipv4Addresses[0].address;
 }
 
-const localIP = getLocalIPAddress();
-const remoteURL = `http://${localIP}:${PORT}/remote.html`;
+const remoteURL = `http://${getLocalIPAddress()}:${PORT}/remote.html`;
+// Helper to determine base URL from request (handles Render public URL)
+function getBaseURL(req) {
+  const protocol = req.protocol || 'https';
+  const host = req.get('host');
+  return `${protocol}://${host}`;
+}
 
 // Serve public directory
 app.use(express.static(path.join(__dirname, 'public')));
@@ -87,19 +92,18 @@ app.use(express.static(path.join(__dirname, 'public')));
 // API endpoint to get configuration (IP, remote URL, QR Code)
 app.get('/api/config', async (req, res) => {
   try {
+    const baseURL = getBaseURL(req);
+    const remoteURL = `${baseURL}/remote.html`;
     const qrCodeDataUrl = await QRCode.toDataURL(remoteURL, {
-      color: {
-        dark: '#1e293b', // Slate 800
-        light: '#ffffff'
-      },
+      color: { dark: '#1e293b', light: '#ffffff' },
       width: 300,
-      margin: 2
+      margin: 2,
     });
     res.json({
-      localIP,
+      localIP: getLocalIPAddress(), // for ref
       port: PORT,
       remoteURL,
-      qrCodeDataUrl
+      qrCodeDataUrl,
     });
   } catch (err) {
     console.error('Error generating QR code:', err);
@@ -209,7 +213,27 @@ io.on('connection', (socket) => {
 // ---------------------------------------------------
 const pptUpload = upload.single('ppt');
 
-app.post('/api/ppt/upload', pptUpload, (req, res) => {
+const convertCmd = `libreoffice --headless --convert-to png --outdir "${outDir}" "${srcPath}"`;
+  exec(convertCmd, { timeout: 180000 }, (err) => {
+    // Clean up uploaded source file
+    try { fs.unlinkSync(srcPath); } catch (_) {}
+    if (err) {
+      console.error('LibreOffice conversion error:', err);
+      return res.status(500).json({ error: 'Conversion failed. LibreOffice may not be installed on the server.' });
+    }
+    // LibreOffice creates PNG files directly in outDir
+    const files = fs.readdirSync(outDir)
+      .filter(f => /\.(png|jpg|jpeg)$/i.test(f))
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    if (files.length === 0) {
+      return res.status(500).json({ error: 'Conversion produced no slides. Please ensure the file is a valid PowerPoint presentation.' });
+    }
+    const slides = files.map((file, idx) => ({ title: `Slide ${idx + 1}`, image: `ppt/${presentationId}/${file}` }));
+    const jsonPath = path.join(__dirname, 'public', 'ppt', `${presentationId}-slides.json`);
+    fs.writeFileSync(jsonPath, JSON.stringify(slides, null, 2), 'utf8');
+    res.json({ presentationId, slideCount: slides.length });
+  });
+
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
@@ -293,7 +317,7 @@ app.get('/api/ppt/slides/:id', (req, res) => {
 app.get('/api/ppt/config/:id', async (req, res) => {
   try {
     const id = req.params.id;
-    const baseURL = `http://${localIP}:${PORT}`;
+    const baseURL = getBaseURL(req);
     const viewerURL = `${baseURL}/ppt-view.html?id=${id}`;
     const phoneRemoteURL = `${baseURL}/remote.html?ppt=${id}`;
     const qrCodeDataUrl = await QRCode.toDataURL(phoneRemoteURL, { color: { dark: '#1e293b', light: '#ffffff' }, width: 300, margin: 2 });
