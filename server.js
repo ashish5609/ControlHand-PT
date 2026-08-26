@@ -208,9 +208,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// ---------------------------------------------------
-// PPT upload & conversion (Option B – PowerPoint COM)
-// ---------------------------------------------------
+// PPT upload & conversion (LibreOffice)
 const pptUpload = upload.single('ppt');
 
 const convertCmd = `libreoffice --headless --convert-to png --outdir "${outDir}" "${srcPath}"`;
@@ -321,7 +319,7 @@ app.get('/api/ppt/config/:id', async (req, res) => {
     const viewerURL = `${baseURL}/ppt-view.html?id=${id}`;
     const phoneRemoteURL = `${baseURL}/remote.html?ppt=${id}`;
     const qrCodeDataUrl = await QRCode.toDataURL(phoneRemoteURL, { color: { dark: '#1e293b', light: '#ffffff' }, width: 300, margin: 2 });
-    res.json({ viewerURL, phoneRemoteURL, qrCodeDataUrl, localIP, port: PORT });
+    res.json({ viewerURL, phoneRemoteURL, qrCodeDataUrl, port: PORT });
   } catch (e) {
     console.error('QR config error:', e);
     res.status(500).json({ error: 'Failed to generate QR' });
