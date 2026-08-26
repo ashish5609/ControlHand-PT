@@ -6,20 +6,40 @@ import path from 'path';
 import fs from 'fs';
 import QRCode from 'qrcode';
 import { fileURLToPath } from 'url';
-// Multer for handling PPT uploads
 import multer from 'multer';
-import { exec } from 'child_process';
-// Resolve directory name for ES modules
+import { execFile } from 'child_process';
+
+// ============================================================
+// ES MODULE PATH SETUP
+// ============================================================
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const upload = multer({ dest: path.join(__dirname, 'uploads') });
 
-// Ensure required directories exist
-fs.mkdirSync(path.join(__dirname, 'uploads'), { recursive: true });
-fs.mkdirSync(path.join(__dirname, 'public', 'ppt'), { recursive: true });
+// ============================================================
+// DIRECTORY SETUP
+// ============================================================
+
+const uploadsDir = path.join(__dirname, 'uploads');
+const pptDir = path.join(__dirname, 'public', 'ppt');
+const libreOfficeProfileDir = path.join(__dirname, 'lo-profiles');
+
+fs.mkdirSync(uploadsDir, { recursive: true });
+fs.mkdirSync(pptDir, { recursive: true });
+fs.mkdirSync(libreOfficeProfileDir, { recursive: true });
+
+// Multer upload configuration
+const upload = multer({
+  dest: uploadsDir
+});
+
+// ============================================================
+// EXPRESS + HTTP + SOCKET.IO
+// ============================================================
 
 const app = express();
 const httpServer = createServer(app);
+
 const io = new Server(httpServer, {
   cors: {
     origin: '*',
@@ -29,25 +49,32 @@ const io = new Server(httpServer, {
 
 const PORT = process.env.PORT || 3000;
 
-// Helper to get local IP address, prioritizing Wi-Fi interfaces
+// ============================================================
+// LOCAL IP DETECTION
+// ============================================================
+
 function getLocalIPAddress() {
   const interfaces = os.networkInterfaces();
   const ipv4Addresses = [];
 
   for (const interfaceName of Object.keys(interfaces)) {
-    for (const iface of interfaces[interfaceName]) {
-      // Check for IPv4 and ensure it's not a loopback/internal address
+    const interfaceList = interfaces[interfaceName] || [];
+
+    for (const iface of interfaceList) {
       if (iface.family === 'IPv4' && !iface.internal) {
         const nameLower = interfaceName.toLowerCase();
-        // Exclude virtual/host-only network interfaces (like VMware/VirtualBox adapters) if possible
-        if (nameLower.includes('virtual') || 
-            nameLower.includes('vbox') || 
-            nameLower.includes('vmnet') ||
-            nameLower.includes('wsl') ||
-            // Exclude VirtualBox host-only ethernet adapter (often named 'Ethernet 2' or similar with Mac address 0a:00:27...)
-            iface.mac === '0a:00:27:00:00:03') {
+
+        // Ignore virtual adapters
+        if (
+          nameLower.includes('virtual') ||
+          nameLower.includes('vbox') ||
+          nameLower.includes('vmnet') ||
+          nameLower.includes('wsl') ||
+          iface.mac === '0a:00:27:00:00:03'
+        ) {
           continue;
         }
+
         ipv4Addresses.push({
           name: interfaceName,
           address: iface.address
@@ -60,132 +87,260 @@ function getLocalIPAddress() {
     return 'localhost';
   }
 
-  // 1. Prioritize Wi-Fi/Wireless connections which are standard for phone pairing
-  const wifiIp = ipv4Addresses.find(ip => {
+  // Prefer Wi-Fi
+  const wifiIp = ipv4Addresses.find((ip) => {
     const nameLower = ip.name.toLowerCase();
-    return nameLower.includes('wi-fi') || 
-           nameLower.includes('wifi') || 
-           nameLower.includes('wlan') || 
-           nameLower.includes('wireless');
+
+    return (
+      nameLower.includes('wi-fi') ||
+      nameLower.includes('wifi') ||
+      nameLower.includes('wlan') ||
+      nameLower.includes('wireless')
+    );
   });
-  if (wifiIp) return wifiIp.address;
 
-  // 2. Next, look for Ethernet/LAN connections
-  const ethIp = ipv4Addresses.find(ip => ip.name.toLowerCase().includes('ethernet'));
-  if (ethIp) return ethIp.address;
+  if (wifiIp) {
+    return wifiIp.address;
+  }
 
-  // 3. Fallback to first detected address
+  // Then Ethernet
+  const ethIp = ipv4Addresses.find((ip) =>
+    ip.name.toLowerCase().includes('ethernet')
+  );
+
+  if (ethIp) {
+    return ethIp.address;
+  }
+
+  // Fallback
   return ipv4Addresses[0].address;
 }
 
+// ============================================================
+// URL HELPERS
+// ============================================================
+
 const remoteURL = `http://${getLocalIPAddress()}:${PORT}/remote.html`;
 
-// Helper to determine base URL from request (handles Render public URL)
 function getBaseURL(req) {
-  const protocol = req.protocol || 'https';
+  // Render normally gives HTTPS externally.
+  const protocol =
+    req.headers['x-forwarded-proto'] ||
+    req.protocol ||
+    'https';
+
   const host = req.get('host');
+
   return `${protocol}://${host}`;
 }
 
-// Serve public directory
+// ============================================================
+// STATIC FILES
+// ============================================================
+
 app.use(express.static(path.join(__dirname, 'public')));
 
-// API endpoint to get configuration (IP, remote URL, QR Code)
+// ============================================================
+// BASIC HEALTH CHECK
+// ============================================================
+
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'ControlHand PT server is running',
+    libreOfficeCommand: 'libreoffice'
+  });
+});
+
+// ============================================================
+// CONFIG API
+// ============================================================
+
 app.get('/api/config', async (req, res) => {
   try {
     const baseURL = getBaseURL(req);
-    const remoteURL = `${baseURL}/remote.html`;
-    const qrCodeDataUrl = await QRCode.toDataURL(remoteURL, {
-      color: { dark: '#1e293b', light: '#ffffff' },
-      width: 300,
-      margin: 2,
-    });
+    const remoteURLForRequest = `${baseURL}/remote.html`;
+
+    const qrCodeDataUrl = await QRCode.toDataURL(
+      remoteURLForRequest,
+      {
+        color: {
+          dark: '#1e293b',
+          light: '#ffffff'
+        },
+        width: 300,
+        margin: 2
+      }
+    );
+
     res.json({
-      localIP: getLocalIPAddress(), // kept for reference
+      localIP: getLocalIPAddress(),
       port: PORT,
-      remoteURL,
-      qrCodeDataUrl,
+      remoteURL: remoteURLForRequest,
+      qrCodeDataUrl
     });
   } catch (err) {
     console.error('Error generating QR code:', err);
-    res.status(500).json({ error: 'Failed to generate configuration' });
+
+    res.status(500).json({
+      error: 'Failed to generate configuration'
+    });
   }
 });
 
-// API endpoint to fetch slides.json dynamically (allows hot reloading without server restart)
+// ============================================================
+// STATIC slides.json API
+// ============================================================
+
 app.get('/api/slides', (req, res) => {
   const slidesPath = path.join(__dirname, 'slides.json');
+
   fs.readFile(slidesPath, 'utf8', (err, data) => {
     if (err) {
       console.error('Error reading slides.json:', err);
-      // Fallback slides in case of read error
+
       return res.json([
         {
-          title: "Presentation Load Error",
-          subtitle: "slides.json could not be loaded",
-          bullets: ["Please verify that slides.json exists and is valid JSON."],
-          notes: "Verify file presence."
+          title: 'Presentation Load Error',
+          subtitle: 'slides.json could not be loaded',
+          bullets: [
+            'Please verify that slides.json exists and is valid JSON.'
+          ],
+          notes: 'Verify file presence.'
         }
       ]);
     }
+
     try {
       const slides = JSON.parse(data);
       res.json(slides);
     } catch (parseErr) {
       console.error('Error parsing slides.json:', parseErr);
-      res.status(500).json({ error: 'Invalid JSON in slides.json' });
+
+      res.status(500).json({
+        error: 'Invalid JSON in slides.json'
+      });
     }
   });
 });
 
-// Presentation State
+// ============================================================
+// PRESENTATION STATE
+// ============================================================
+
 let currentSlideIndex = 0;
 let totalSlidesCount = 0;
 
-// Socket.io connection handling
+// ============================================================
+// SOCKET.IO
+// ============================================================
+
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
-  // Send initial state to newly connected client
+  // Send current state to newly connected client
   socket.emit('state-update', {
-    currentSlideIndex
+    currentSlideIndex,
+    totalSlidesCount
   });
 
-  // When a client updates the total slides count
+  // ----------------------------------------------------------
+  // TOTAL SLIDE COUNT
+  // ----------------------------------------------------------
+
   socket.on('set-total-slides', (count) => {
-    totalSlidesCount = count;
+    const numericCount = Number(count);
+
+    if (!Number.isFinite(numericCount) || numericCount < 0) {
+      return;
+    }
+
+    totalSlidesCount = Math.floor(numericCount);
+
+    // Keep current index valid
+    if (
+      totalSlidesCount > 0 &&
+      currentSlideIndex >= totalSlidesCount
+    ) {
+      currentSlideIndex = totalSlidesCount - 1;
+    }
+
     io.emit('state-update', {
       currentSlideIndex,
       totalSlidesCount
     });
   });
 
-  // Slide navigation events from remote
+  // ----------------------------------------------------------
+  // NEXT SLIDE
+  // ----------------------------------------------------------
+
   socket.on('next-slide', () => {
-    if (totalSlidesCount > 0 && currentSlideIndex < totalSlidesCount - 1) {
+    if (
+      totalSlidesCount > 0 &&
+      currentSlideIndex < totalSlidesCount - 1
+    ) {
       currentSlideIndex++;
-      io.emit('state-update', { currentSlideIndex });
-      console.log(`Slide changed to: ${currentSlideIndex}`);
+
+      io.emit('state-update', {
+        currentSlideIndex,
+        totalSlidesCount
+      });
+
+      console.log(
+        `Slide changed to: ${currentSlideIndex}`
+      );
     }
   });
+
+  // ----------------------------------------------------------
+  // PREVIOUS SLIDE
+  // ----------------------------------------------------------
 
   socket.on('prev-slide', () => {
     if (currentSlideIndex > 0) {
       currentSlideIndex--;
-      io.emit('state-update', { currentSlideIndex });
-      console.log(`Slide changed to: ${currentSlideIndex}`);
+
+      io.emit('state-update', {
+        currentSlideIndex,
+        totalSlidesCount
+      });
+
+      console.log(
+        `Slide changed to: ${currentSlideIndex}`
+      );
     }
   });
+
+  // ----------------------------------------------------------
+  // GOTO SLIDE
+  // ----------------------------------------------------------
 
   socket.on('goto-slide', (index) => {
-    if (index >= 0 && index < totalSlidesCount) {
-      currentSlideIndex = index;
-      io.emit('state-update', { currentSlideIndex });
-      console.log(`Slide jumped to: ${currentSlideIndex}`);
+    const numericIndex = Number(index);
+
+    if (
+      Number.isInteger(numericIndex) &&
+      numericIndex >= 0 &&
+      numericIndex < totalSlidesCount
+    ) {
+      currentSlideIndex = numericIndex;
+
+      io.emit('state-update', {
+        currentSlideIndex,
+        totalSlidesCount
+      });
+
+      console.log(
+        `Slide jumped to: ${currentSlideIndex}`
+      );
     }
   });
 
-  // Real-time synchronization request from a remote (re-sync)
+  // ----------------------------------------------------------
+  // REQUEST SYNC
+  // ----------------------------------------------------------
+
   socket.on('request-sync', () => {
     socket.emit('state-update', {
       currentSlideIndex,
@@ -193,101 +348,679 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Laser pointer events
+  // ----------------------------------------------------------
+  // LASER POINTER
+  // ----------------------------------------------------------
+
   socket.on('laser-move', (coords) => {
-    // Broadcast laser coordinates to all other clients (primarily the presentation viewer)
     socket.broadcast.emit('laser-moved', coords);
   });
 
   socket.on('laser-toggle', (state) => {
-    // Broadcast active status to all other clients
     socket.broadcast.emit('laser-toggled', state);
   });
+
+  // ----------------------------------------------------------
+  // DISCONNECT
+  // ----------------------------------------------------------
 
   socket.on('disconnect', () => {
     console.log(`Client disconnected: ${socket.id}`);
   });
 });
 
-// ---------------------------------------------------
-// PPT upload & conversion (LibreOffice)
-// ---------------------------------------------------
+// ============================================================
+// PPT UPLOAD
+// ============================================================
+
 const pptUpload = upload.single('ppt');
 
+// ============================================================
+// FIND LIBREOFFICE
+// ============================================================
+
+function getLibreOfficeCommand() {
+  // We expect the Docker image to install this as "libreoffice".
+  // Keep this in one place so it can be changed easily later.
+  return 'libreoffice';
+}
+
+// ============================================================
+// PPT -> PNG CONVERSION
+// ============================================================
+
 app.post('/api/ppt/upload', pptUpload, (req, res) => {
-  console.log('--- Upload debug ---');
-  console.log('Headers:', req.headers);
-  console.log('req.file:', req.file);
-  console.log('req.body:', req.body);
+  console.log('');
+  console.log('==============================================');
+  console.log('            PPT UPLOAD STARTED');
+  console.log('==============================================');
+
+  console.log('Request method:', req.method);
+  console.log('Content-Type:', req.headers['content-type']);
+  console.log('Uploaded file:', req.file);
+
+  // ----------------------------------------------------------
+  // CHECK FILE
+  // ----------------------------------------------------------
+
   if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded' });
+    console.error('No file uploaded.');
+
+    return res.status(400).json({
+      error: 'No file uploaded'
+    });
   }
+
+  // ----------------------------------------------------------
+  // VALIDATE EXTENSION
+  // ----------------------------------------------------------
+
   const originalName = req.file.originalname;
   const ext = path.extname(originalName).toLowerCase();
+
+  console.log('Original file:', originalName);
+  console.log('Extension:', ext);
+
   if (ext !== '.ppt' && ext !== '.pptx') {
-    return res.status(400).json({ error: 'Only .ppt or .pptx files are supported' });
+    try {
+      fs.unlinkSync(req.file.path);
+    } catch (_) {}
+
+    return res.status(400).json({
+      error: 'Only .ppt or .pptx files are supported'
+    });
   }
-  const presentationId = path.parse(originalName).name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
-  const outDir = path.join(__dirname, 'public', 'ppt', presentationId);
-  fs.mkdirSync(outDir, { recursive: true });
 
-  // Rename uploaded file to have proper extension
-  const srcPath = path.resolve(req.file.path + ext);
-  fs.renameSync(req.file.path, srcPath);
+  // ----------------------------------------------------------
+  // CREATE SAFE PRESENTATION ID
+  // ----------------------------------------------------------
 
-  // Convert using LibreOffice
-  const convertCmd = `libreoffice --headless --convert-to png --outdir "${outDir}" "${srcPath}"`;
-  exec(convertCmd, { timeout: 180000 }, (err) => {
-    // Clean up source file
-    try { fs.unlinkSync(srcPath); } catch (_) {}
-    if (err) {
-      console.error('LibreOffice conversion error:', err);
-      return res.status(500).json({ error: 'Conversion failed. LibreOffice may not be installed on the server.' });
-    }
-    // Gather PNG files
-    const files = fs.readdirSync(outDir)
-      .filter(f => /\.(png|jpg|jpeg)$/i.test(f))
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-    if (files.length === 0) {
-      return res.status(500).json({ error: 'Conversion produced no slides. Please ensure the file is a valid PowerPoint presentation.' });
-    }
-    const slides = files.map((file, idx) => ({ title: `Slide ${idx + 1}`, image: `ppt/${presentationId}/${file}` }));
-    const jsonPath = path.join(__dirname, 'public', 'ppt', `${presentationId}-slides.json`);
-    fs.writeFileSync(jsonPath, JSON.stringify(slides, null, 2), 'utf8');
-    res.json({ presentationId, slideCount: slides.length });
+  let presentationId = path
+    .parse(originalName)
+    .name
+    .replace(/\s+/g, '_')
+    .replace(/[^a-zA-Z0-9_-]/g, '');
+
+  // Prevent empty ID
+  if (!presentationId) {
+    presentationId = `presentation_${Date.now()}`;
+  }
+
+  console.log('Presentation ID:', presentationId);
+
+  // ----------------------------------------------------------
+  // OUTPUT DIRECTORY
+  // ----------------------------------------------------------
+
+  const outDir = path.join(
+    pptDir,
+    presentationId
+  );
+
+  // Remove old output if same presentation name was uploaded
+  try {
+    fs.rmSync(outDir, {
+      recursive: true,
+      force: true
+    });
+  } catch (cleanupError) {
+    console.error(
+      'Error cleaning old presentation folder:',
+      cleanupError
+    );
+  }
+
+  fs.mkdirSync(outDir, {
+    recursive: true
   });
+
+  console.log('Output directory:', outDir);
+
+  // ----------------------------------------------------------
+  // GIVE UPLOADED FILE ITS REAL EXTENSION
+  // ----------------------------------------------------------
+
+  const srcPath = path.resolve(
+    req.file.path + ext
+  );
+
+  try {
+    fs.renameSync(
+      req.file.path,
+      srcPath
+    );
+  } catch (renameError) {
+    console.error(
+      'Could not rename uploaded file:',
+      renameError
+    );
+
+    return res.status(500).json({
+      error: 'Could not prepare uploaded PowerPoint file',
+      details: renameError.message
+    });
+  }
+
+  console.log('Source PowerPoint:', srcPath);
+
+  // ----------------------------------------------------------
+  // CHECK SOURCE EXISTS
+  // ----------------------------------------------------------
+
+  if (!fs.existsSync(srcPath)) {
+    console.error(
+      'Source PPTX does not exist:',
+      srcPath
+    );
+
+    return res.status(500).json({
+      error: 'Uploaded file could not be found after upload'
+    });
+  }
+
+  // ----------------------------------------------------------
+  // LIBREOFFICE PROFILE
+  // ----------------------------------------------------------
+  //
+  // Each presentation gets its own temporary profile.
+  // This avoids lock/profile conflicts on Linux/Render.
+  //
+
+  const loProfile = path.join(
+    libreOfficeProfileDir,
+    `${presentationId}_${Date.now()}`
+  );
+
+  fs.mkdirSync(loProfile, {
+    recursive: true
+  });
+
+  // ----------------------------------------------------------
+  // LIBREOFFICE COMMAND
+  // ----------------------------------------------------------
+
+  const libreOfficeCommand =
+    getLibreOfficeCommand();
+
+  const libreOfficeArgs = [
+    '--headless',
+    '--nologo',
+    '--nodefault',
+    '--nofirststartwizard',
+    '--norestore',
+    '--nolockcheck',
+
+    // Unique user profile for this conversion
+    `-env:UserInstallation=file://${loProfile}`,
+
+    // Explicit conversion format
+    '--convert-to',
+    'png',
+
+    // Output folder
+    '--outdir',
+    outDir,
+
+    // Input file
+    srcPath
+  ];
+
+  console.log('');
+  console.log('----------------------------------------------');
+  console.log('Starting LibreOffice conversion');
+  console.log('----------------------------------------------');
+  console.log('Command:', libreOfficeCommand);
+  console.log('Arguments:', libreOfficeArgs);
+  console.log('Source exists:', fs.existsSync(srcPath));
+  console.log('Output exists:', fs.existsSync(outDir));
+  console.log('----------------------------------------------');
+
+  // ----------------------------------------------------------
+  // EXECUTE LIBREOFFICE
+  // ----------------------------------------------------------
+
+  execFile(
+    libreOfficeCommand,
+    libreOfficeArgs,
+    {
+      timeout: 180000,
+      maxBuffer: 10 * 1024 * 1024
+    },
+    (err, stdout, stderr) => {
+      console.log('');
+      console.log('==============================================');
+      console.log('         LIBREOFFICE CONVERSION RESULT');
+      console.log('==============================================');
+
+      console.log('Exit error:', err);
+      console.log('STDOUT:');
+      console.log(stdout || '(empty)');
+
+      console.log('STDERR:');
+      console.log(stderr || '(empty)');
+
+      console.log('==============================================');
+
+      // --------------------------------------------------------
+      // REMOVE SOURCE PPT/PPTX
+      // --------------------------------------------------------
+
+      try {
+        if (fs.existsSync(srcPath)) {
+          fs.unlinkSync(srcPath);
+          console.log(
+            'Temporary PowerPoint file deleted.'
+          );
+        }
+      } catch (deleteError) {
+        console.error(
+          'Could not delete source file:',
+          deleteError
+        );
+      }
+
+      // --------------------------------------------------------
+      // CONVERSION FAILED
+      // --------------------------------------------------------
+
+      if (err) {
+        console.error(
+          'LibreOffice conversion FAILED.'
+        );
+
+        return res.status(500).json({
+          error: 'PowerPoint conversion failed',
+          message: err.message,
+          stdout: stdout || '',
+          stderr: stderr || ''
+        });
+      }
+
+      // --------------------------------------------------------
+      // CHECK OUTPUT DIRECTORY
+      // --------------------------------------------------------
+
+      if (!fs.existsSync(outDir)) {
+        console.error(
+          'LibreOffice did not create output directory.'
+        );
+
+        return res.status(500).json({
+          error: 'Conversion completed but output directory was not created',
+          stdout: stdout || '',
+          stderr: stderr || ''
+        });
+      }
+
+      console.log(
+        'Files immediately after conversion:',
+        fs.readdirSync(outDir)
+      );
+
+      // --------------------------------------------------------
+      // HANDLE POSSIBLE NESTED OUTPUT DIRECTORY
+      // --------------------------------------------------------
+      //
+      // Some LibreOffice/Impress configurations may create:
+      //
+      // outDir/
+      //   presentation/
+      //      1.png
+      //      2.png
+      //
+      // We flatten that structure.
+      //
+
+      try {
+        const entries = fs.readdirSync(outDir);
+
+        const subdirs = entries.filter((entry) => {
+          try {
+            return fs
+              .statSync(path.join(outDir, entry))
+              .isDirectory();
+          } catch (_) {
+            return false;
+          }
+        });
+
+        console.log(
+          'Subdirectories found:',
+          subdirs
+        );
+
+        if (subdirs.length === 1) {
+          const subPath = path.join(
+            outDir,
+            subdirs[0]
+          );
+
+          const subFiles = fs.readdirSync(
+            subPath
+          );
+
+          console.log(
+            'Flattening nested directory:',
+            subPath
+          );
+
+          for (const file of subFiles) {
+            const sourceFile = path.join(
+              subPath,
+              file
+            );
+
+            const destinationFile = path.join(
+              outDir,
+              file
+            );
+
+            // Only move files
+            if (
+              fs.existsSync(sourceFile) &&
+              fs.statSync(sourceFile).isFile()
+            ) {
+              fs.renameSync(
+                sourceFile,
+                destinationFile
+              );
+            }
+          }
+
+          fs.rmSync(subPath, {
+            recursive: true,
+            force: true
+          });
+
+          console.log(
+            'Nested output directory removed.'
+          );
+        }
+      } catch (flattenError) {
+        console.error(
+          'Error while flattening LibreOffice output:',
+          flattenError
+        );
+
+        return res.status(500).json({
+          error: 'Could not process converted slide files',
+          details: flattenError.message
+        });
+      }
+
+      // --------------------------------------------------------
+      // COLLECT PNG/JPG FILES
+      // --------------------------------------------------------
+
+      let files = [];
+
+      try {
+        files = fs
+          .readdirSync(outDir)
+          .filter((file) =>
+            /\.(png|jpg|jpeg)$/i.test(file)
+          )
+          .sort((a, b) =>
+            a.localeCompare(
+              b,
+              undefined,
+              {
+                numeric: true
+              }
+            )
+          );
+      } catch (readError) {
+        console.error(
+          'Could not read output directory:',
+          readError
+        );
+
+        return res.status(500).json({
+          error: 'Could not read converted slides',
+          details: readError.message
+        });
+      }
+
+      console.log('');
+      console.log('==============================================');
+      console.log('             CONVERTED SLIDES');
+      console.log('==============================================');
+      console.log('Files:', files);
+      console.log('Slide count:', files.length);
+      console.log('==============================================');
+
+      // --------------------------------------------------------
+      // NO SLIDES
+      // --------------------------------------------------------
+
+      if (files.length === 0) {
+        console.error(
+          'LibreOffice returned success but no PNG files were found.'
+        );
+
+        return res.status(500).json({
+          error: 'Conversion produced no slides',
+          stdout: stdout || '',
+          stderr: stderr || ''
+        });
+      }
+
+      // --------------------------------------------------------
+      // CREATE SLIDE JSON
+      // --------------------------------------------------------
+
+      const slides = files.map(
+        (file, index) => ({
+          title: `Slide ${index + 1}`,
+          image: `ppt/${presentationId}/${file}`
+        })
+      );
+
+      const jsonPath = path.join(
+        pptDir,
+        `${presentationId}-slides.json`
+      );
+
+      try {
+        fs.writeFileSync(
+          jsonPath,
+          JSON.stringify(
+            slides,
+            null,
+            2
+          ),
+          'utf8'
+        );
+      } catch (jsonError) {
+        console.error(
+          'Could not create slides JSON:',
+          jsonError
+        );
+
+        return res.status(500).json({
+          error: 'Could not create presentation metadata',
+          details: jsonError.message
+        });
+      }
+
+      // --------------------------------------------------------
+      // DELETE LIBREOFFICE PROFILE
+      // --------------------------------------------------------
+
+      try {
+        fs.rmSync(
+          loProfile,
+          {
+            recursive: true,
+            force: true
+          }
+        );
+      } catch (profileError) {
+        console.warn(
+          'Could not remove LibreOffice profile:',
+          profileError.message
+        );
+      }
+
+      console.log('');
+      console.log('==============================================');
+      console.log('       PPT CONVERSION SUCCESSFUL');
+      console.log('==============================================');
+      console.log(
+        'Presentation ID:',
+        presentationId
+      );
+      console.log(
+        'Slide count:',
+        slides.length
+      );
+      console.log(
+        'JSON:',
+        jsonPath
+      );
+      console.log('==============================================');
+
+      // --------------------------------------------------------
+      // RESPONSE
+      // --------------------------------------------------------
+
+      return res.json({
+        presentationId,
+        slideCount: slides.length
+      });
+    }
+  );
 });
+
+// ============================================================
+// GET SLIDES FOR PRESENTATION
+// ============================================================
 
 app.get('/api/ppt/slides/:id', (req, res) => {
   const id = req.params.id;
-  const jsonPath = path.join(__dirname, 'public', 'ppt', `${id}-slides.json`);
+
+  const jsonPath = path.join(
+    pptDir,
+    `${id}-slides.json`
+  );
+
   if (!fs.existsSync(jsonPath)) {
-    return res.status(404).json({ error: 'Presentation not found' });
+    return res.status(404).json({
+      error: 'Presentation not found'
+    });
   }
-  const data = fs.readFileSync(jsonPath, 'utf8');
-  res.json(JSON.parse(data));
-});
 
-app.get('/api/ppt/config/:id', async (req, res) => {
   try {
-    const id = req.params.id;
-    const baseURL = getBaseURL(req);
-    const viewerURL = `${baseURL}/ppt-view.html?id=${id}`;
-    const phoneRemoteURL = `${baseURL}/remote.html?ppt=${id}`;
-    const qrCodeDataUrl = await QRCode.toDataURL(phoneRemoteURL, { color: { dark: '#1e293b', light: '#ffffff' }, width: 300, margin: 2 });
-    res.json({ viewerURL, phoneRemoteURL, qrCodeDataUrl, port: PORT });
-  } catch (e) {
-    console.error('QR config error:', e);
-    res.status(500).json({ error: 'Failed to generate QR' });
+    const data = fs.readFileSync(
+      jsonPath,
+      'utf8'
+    );
+
+    res.json(
+      JSON.parse(data)
+    );
+  } catch (error) {
+    console.error(
+      'Error reading presentation JSON:',
+      error
+    );
+
+    res.status(500).json({
+      error: 'Could not read presentation data'
+    });
   }
 });
 
-// Start Server
-httpServer.listen(PORT, '0.0.0.0', () => {
-  console.log('==================================================');
-  console.log(`  ControlHand PT Server is running!`);
-  console.log(`  Local Access (Laptop): http://localhost:${PORT}`);
-  console.log(`  Remote Access (Phone): ${remoteURL}`);
-  console.log(`  Make sure both devices are on the SAME Wi-Fi network.`);
-  console.log('==================================================');
-});
+// ============================================================
+// PPT CONFIG / QR
+// ============================================================
+
+app.get(
+  '/api/ppt/config/:id',
+  async (req, res) => {
+    try {
+      const id = req.params.id;
+
+      const baseURL = getBaseURL(req);
+
+      const viewerURL =
+        `${baseURL}/ppt-view.html?id=${encodeURIComponent(id)}`;
+
+      const phoneRemoteURL =
+        `${baseURL}/remote.html?ppt=${encodeURIComponent(id)}`;
+
+      const qrCodeDataUrl =
+        await QRCode.toDataURL(
+          phoneRemoteURL,
+          {
+            color: {
+              dark: '#1e293b',
+              light: '#ffffff'
+            },
+            width: 300,
+            margin: 2
+          }
+        );
+
+      res.json({
+        viewerURL,
+        phoneRemoteURL,
+        qrCodeDataUrl,
+        port: PORT
+      });
+    } catch (error) {
+      console.error(
+        'QR config error:',
+        error
+      );
+
+      res.status(500).json({
+        error: 'Failed to generate QR'
+      });
+    }
+  }
+);
+
+// ============================================================
+// START SERVER
+// ============================================================
+
+httpServer.listen(
+  PORT,
+  '0.0.0.0',
+  () => {
+    console.log('');
+    console.log(
+      '=================================================='
+    );
+    console.log(
+      '        ControlHand PT Server is running'
+    );
+    console.log(
+      '=================================================='
+    );
+
+    console.log(
+      `Local Access: http://localhost:${PORT}`
+    );
+
+    console.log(
+      `Remote Access: ${remoteURL}`
+    );
+
+    console.log(
+      `Port: ${PORT}`
+    );
+
+    console.log(
+      'Environment:',
+      process.env.RENDER
+        ? 'Render'
+        : 'Local'
+    );
+
+    console.log(
+      '=================================================='
+    );
+  }
+);
