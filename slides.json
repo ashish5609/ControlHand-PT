@@ -1,0 +1,59 @@
+[
+  {
+    "title": "Phone-as-a-Remote Presentation Tool",
+    "subtitle": "Built with Node.js, WebSockets, and HTML5",
+    "bullets": [
+      "Real-time slide synchronization over local Wi-Fi",
+      "No external clicker hardware needed - just your smartphone",
+      "Features interactive laser pointer, speaker notes, & timer",
+      "Zero installation required on the controller device"
+    ],
+    "notes": "Welcome everyone! Today I am going to show you a presentation tool that is controlled directly from my phone. I am not using any clicker, just a WebSocket connection over the local Wi-Fi. Let's see how it works!"
+  },
+  {
+    "title": "System Architecture",
+    "subtitle": "How the synchronization works under the hood",
+    "bullets": [
+      "Laptop hosts a local Express server + WebSockets (Socket.io) on port 3000",
+      "Server auto-detects the laptop's LAN IP address",
+      "Server generates a QR code pointing directly to the mobile remote URL",
+      "When phone scans, it connects to the WebSocket stream to send control signals"
+    ],
+    "notes": "Let's explain the architecture. The laptop runs a local Node.js server. By using Socket.io, we get bidirectional communication. When I press next or swipe on my phone, it emits a socket event which the laptop slides page receives in less than 50 milliseconds."
+  },
+  {
+    "title": "Key Features Overview",
+    "subtitle": "Equipped for professional talks",
+    "bullets": [
+      "**Dual-screen Sync**: Presenter views notes & timer, audience views slides",
+      "**Touch Gestures**: Swipe left or right on mobile to change slides",
+      "**Laser Pointer**: Drag finger on phone touchpad to project a red dot on screen",
+      "**Flexible Slide Format**: Built on simple JSON slide files that are easy to edit",
+      "**Active Timer**: Keeps track of your presentation length in real-time"
+    ],
+    "notes": "Here are some of the key features. Aside from next and previous buttons, we have speaker notes, a touchpad for a laser pointer, and a presentation timer. This makes it a full-fledged presentation client."
+  },
+  {
+    "title": "The Virtual Laser Pointer",
+    "subtitle": "Interact with slide content from distance",
+    "bullets": [
+      "No physical laser pointer? No problem!",
+      "Toggle 'Laser Pointer' on the mobile remote interface",
+      "A touch-sensitive canvas/area translates your finger movement",
+      "Coordinates are transmitted via Socket.io and rendered on the laptop screen",
+      "Designed with throttling to prevent network lag"
+    ],
+    "notes": "Let's demonstrate the laser pointer. I can toggle it on my phone, and then drag my finger across the touchpad. You can see the red dot on the screen following my touch perfectly. This is extremely useful for pointing out specific diagrams or text."
+  },
+  {
+    "title": "Thank You!",
+    "subtitle": "Scan, Pair, and Control",
+    "bullets": [
+      "Created with HTML, CSS, JS, Node.js, and Socket.io",
+      "Try editing slides.json to create your own presentation",
+      "Interactive design is fully customizable",
+      "Any questions or feedback?"
+    ],
+    "notes": "Thank you all for listening. This project demonstrates the power of local-network WebSockets for creating interactive, multi-device experiences. Any questions?"
+  }
+]

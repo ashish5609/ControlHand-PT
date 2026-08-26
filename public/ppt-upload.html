@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ControlHand PT - Upload Deck</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        slate: {
+                            800: '#1e293b',
+                            900: '#0f172a',
+                        },
+                        indigo: {
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+    <style>
+        body {
+            background-color: #0f172a; /* bg-slate-900 */
+            color: #f8fafc;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .drop-zone {
+            border: 2px dashed #475569; /* border-slate-600 */
+            transition: all 0.3s ease;
+        }
+        .drop-zone.dragover {
+            border-color: #6366f1; /* border-indigo-500 */
+            background-color: rgba(99, 102, 241, 0.1);
+        }
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            border-top: 3px solid #6366f1;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4 bg-slate-950">
+
+    <div class="w-full max-w-md glass-card rounded-2xl p-6 sm:p-8 border border-slate-800 shadow-2xl">
+        <div class="text-center mb-8">
+            <span class="material-symbols-outlined text-indigo-500 text-5xl mb-2">present_to_all</span>
+            <h1 class="text-2xl font-extrabold text-white bg-gradient-to-r from-white via-slate-200 to-indigo-300 bg-clip-text text-transparent">ControlHand PT</h1>
+            <p class="text-slate-400 text-sm mt-2">Upload your PowerPoint file to control it remotely from your phone.</p>
+        </div>
+
+        <!-- Upload Section -->
+        <div id="upload-section">
+            <div id="drop-zone" class="drop-zone rounded-xl p-8 flex flex-col items-center justify-center cursor-pointer mb-6 text-center bg-slate-900/30 border-2 border-dashed border-slate-700 hover:border-indigo-500 hover:bg-slate-900/55 transition-all duration-300">
+                <span class="material-symbols-outlined text-slate-400 text-4xl mb-3">cloud_upload</span>
+                <p class="text-slate-300 font-medium mb-1">Drag and drop your file here</p>
+                <p class="text-slate-500 text-xs mb-4">Supported formats: .ppt, .pptx</p>
+                
+                <input type="file" id="file-input" class="hidden" accept=".ppt,.pptx">
+                <button type="button" onclick="document.getElementById('file-input').click()" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-xs transition-colors border border-slate-700 shadow-md">
+                    Browse Files
+                </button>
+            </div>
+            
+            <div id="selected-file-container" class="hidden mb-6 bg-indigo-500/10 rounded-xl p-3 flex items-center justify-between border border-indigo-500/20">
+                <div class="flex items-center overflow-hidden">
+                    <span class="material-symbols-outlined text-indigo-400 mr-2">description</span>
+                    <span id="selected-file-name" class="text-sm text-slate-200 truncate font-mono">filename.pptx</span>
+                </div>
+                <button type="button" id="clear-file" class="text-slate-400 hover:text-red-400 transition-colors ml-2 flex items-center">
+                    <span class="material-symbols-outlined text-sm">close</span>
+                </button>
+            </div>
+
+            <div id="error-message" class="hidden mb-4 p-3 bg-red-955/40 border border-red-500/20 text-red-200 text-sm rounded-xl flex items-start">
+                <span class="material-symbols-outlined mr-2 text-base">error</span>
+                <span id="error-text">Upload failed.</span>
+            </div>
+
+            <button id="upload-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3.5 px-4 rounded-xl transition-all flex justify-center items-center disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-600/20">
+                <span>Upload & Convert</span>
+                <div id="upload-spinner" class="spinner ml-3 hidden"></div>
+            </button>
+            
+            <p id="status-text" class="text-center text-slate-400 text-xs mt-3 hidden">Converting presentation... This may take a moment.</p>
+        </div>
+
+        <!-- Success Section -->
+        <div id="success-section" class="hidden flex flex-col items-center">
+            <div class="bg-green-500/10 text-green-400 p-2.5 rounded-full mb-3">
+                <span class="material-symbols-outlined text-3xl">check_circle</span>
+            </div>
+            <h2 class="text-xl font-bold text-white mb-1 bg-gradient-to-r from-white via-slate-200 to-indigo-300 bg-clip-text text-transparent">Ready to Present!</h2>
+            <p id="slide-count" class="text-slate-400 text-sm mb-6">X slides processed successfully.</p>
+
+            <div class="bg-white p-3 rounded-2xl mb-4 glow-border flex items-center justify-center shadow-2xl">
+                <img id="qr-code" src="" alt="QR Code" class="w-48 h-48 object-contain rounded-xl">
+            </div>
+            
+            <p class="text-slate-300 text-sm mb-2 text-center">Scan QR code to control from your phone, or visit:</p>
+            <a id="viewer-url" href="#" target="_blank" class="text-indigo-400 hover:text-indigo-300 text-sm font-medium mb-8 break-all text-center underline decoration-indigo-400/30 underline-offset-4">viewer url</a>
+
+            <button id="start-btn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3.5 px-4 rounded-xl transition-colors flex justify-center items-center shadow-lg shadow-indigo-600/20">
+                <span class="material-symbols-outlined mr-2">play_arrow</span>
+                <span>Start Presentation</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Socket.io -->
+    <script src="/socket.io/socket.io.js"></script>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const dropZone = document.getElementById('drop-zone');
+            const fileInput = document.getElementById('file-input');
+            const selectedFileContainer = document.getElementById('selected-file-container');
+            const selectedFileName = document.getElementById('selected-file-name');
+            const clearFileBtn = document.getElementById('clear-file');
+            const uploadBtn = document.getElementById('upload-btn');
+            const uploadSpinner = document.getElementById('upload-spinner');
+            const statusText = document.getElementById('status-text');
+            const errorMessage = document.getElementById('error-message');
+            const errorText = document.getElementById('error-text');
+            
+            const uploadSection = document.getElementById('upload-section');
+            const successSection = document.getElementById('success-section');
+            const qrCodeImg = document.getElementById('qr-code');
+            const viewerUrlLink = document.getElementById('viewer-url');
+            const slideCountText = document.getElementById('slide-count');
+            const startBtn = document.getElementById('start-btn');
+            
+            let selectedFile = null;
+            let presentationId = null;
+
+            // Connect socket to potentially listen for progress if backend supports it
+            const socket = io();
+
+            // Drag and Drop Handlers
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, preventDefaults, false);
+            });
+
+            function preventDefaults(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, () => dropZone.classList.add('dragover'), false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, () => dropZone.classList.remove('dragover'), false);
+            });
+
+            dropZone.addEventListener('drop', (e) => {
+                const dt = e.dataTransfer;
+                const files = dt.files;
+                handleFiles(files);
+            });
+
+            fileInput.addEventListener('change', function() {
+                handleFiles(this.files);
+            });
+
+            function handleFiles(files) {
+                if (files.length === 0) return;
+                
+                const file = files[0];
+                const validExtensions = ['.ppt', '.pptx'];
+                const fileExtension = '.' + file.name.split('.').pop().toLowerCase();
+                
+                if (!validExtensions.includes(fileExtension)) {
+                    showError("Invalid file type. Please upload a .ppt or .pptx file.");
+                    return;
+                }
+
+                selectedFile = file;
+                selectedFileName.textContent = file.name;
+                selectedFileContainer.classList.remove('hidden');
+                dropZone.classList.add('hidden');
+                hideError();
+                uploadBtn.disabled = false;
+            }
+
+            clearFileBtn.addEventListener('click', () => {
+                selectedFile = null;
+                fileInput.value = '';
+                selectedFileContainer.classList.add('hidden');
+                dropZone.classList.remove('hidden');
+                uploadBtn.disabled = true;
+            });
+
+            function showError(msg) {
+                errorText.textContent = msg;
+                errorMessage.classList.remove('hidden');
+            }
+
+            function hideError() {
+                errorMessage.classList.add('hidden');
+            }
+
+            // Upload Logic
+            uploadBtn.addEventListener('click', async () => {
+                if (!selectedFile) return;
+
+                // UI State: Uploading
+                uploadBtn.disabled = true;
+                uploadSpinner.classList.remove('hidden');
+                statusText.classList.remove('hidden');
+                hideError();
+                
+                const formData = new FormData();
+                formData.append('ppt', selectedFile);
+
+                try {
+                    // 1. Upload File
+                    const uploadResponse = await fetch('/api/ppt/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (!uploadResponse.ok) {
+                        const errText = await uploadResponse.text();
+                        throw new Error(errText || 'Upload failed');
+                    }
+
+                    const uploadData = await uploadResponse.json();
+                    presentationId = uploadData.presentationId;
+                    const slideCount = uploadData.slideCount;
+
+                    // 2. Fetch Config (QR Code, Viewer URL)
+                    statusText.textContent = "Fetching presentation details...";
+                    
+                    const configResponse = await fetch(`/api/ppt/config/${presentationId}`);
+                    if (!configResponse.ok) {
+                        throw new Error('Failed to retrieve presentation configuration');
+                    }
+                    
+                    const configData = await configResponse.json();
+
+                    // 3. Update Success UI
+                    slideCountText.textContent = `${slideCount} slide${slideCount !== 1 ? 's' : ''} processed successfully.`;
+                    qrCodeImg.src = configData.qrCodeDataUrl;
+                    viewerUrlLink.href = configData.phoneRemoteURL;
+                    viewerUrlLink.textContent = configData.phoneRemoteURL;
+                    
+                    startBtn.onclick = () => {
+                        window.location.href = `/ppt-view.html?id=${presentationId}`;
+                    };
+
+                    // Switch Sections
+                    uploadSection.classList.add('hidden');
+                    successSection.classList.remove('hidden');
+
+                } catch (error) {
+                    console.error('Upload Error:', error);
+                    showError(error.message || "An error occurred during upload. Please try again.");
+                    uploadBtn.disabled = false;
+                    uploadSpinner.classList.add('hidden');
+                    statusText.classList.add('hidden');
+                }
+            });
+            
+            // Initial state
+            uploadBtn.disabled = true;
+        });
+    </script>
+</body>
+</html>

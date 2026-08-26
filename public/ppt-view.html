@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en" class="bg-slate-950 text-slate-100">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ControlHand PT - Presentation Viewer</title>
+    <link href="/style.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #05070f; /* Pitch dark bg */
+        }
+        #slide-container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+        #slide-image {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            transition: opacity 0.3s ease-in-out;
+            opacity: 0;
+        }
+        #slide-image.active {
+            opacity: 1;
+        }
+        #hud {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(11, 15, 25, 0.75);
+            padding: 10px 18px;
+            border-radius: 9999px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            z-index: 10;
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            opacity: 0.3;
+        }
+        #hud:hover {
+            opacity: 1;
+            transform: translateY(2px);
+        }
+        .hud-btn {
+            background: none;
+            border: none;
+            color: #94a3b8;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px;
+            border-radius: 9999px;
+            transition: all 0.2s;
+        }
+        .hud-btn:hover {
+            background: rgba(255,255,255,0.08);
+            color: white;
+        }
+        #laser-pointer {
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            background-color: rgba(239, 68, 68, 0.95);
+            border-radius: 50%;
+            box-shadow: 0 0 14px 7px rgba(239, 68, 68, 0.7), 0 0 4px 1px rgba(255, 255, 255, 0.9);
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate(-50%, -50%);
+            display: none;
+            transition: opacity 0.15s ease;
+        }
+        .loading {
+            position: absolute;
+            font-size: 1.25rem;
+            color: #94a3b8;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="slide-container">
+        <div class="loading flex flex-col items-center gap-3" id="loading-msg">
+            <div class="animate-spin rounded-full h-8 w-8 border-4 border-indigo-500 border-t-transparent"></div>
+            <span>Loading Presentation...</span>
+        </div>
+        <img id="slide-image" src="" alt="Slide">
+        <div id="laser-pointer"></div>
+    </div>
+
+    <div id="hud">
+        <span id="slide-counter" class="text-sm font-semibold text-indigo-300">0 / 0</span>
+        <button class="hud-btn" id="prev-btn" title="Previous Slide">
+            <span class="material-symbols-outlined text-lg">chevron_left</span>
+        </button>
+        <button class="hud-btn" id="next-btn" title="Next Slide">
+            <span class="material-symbols-outlined text-lg">chevron_right</span>
+        </button>
+        <button class="hud-btn" id="fullscreen-btn" title="Toggle Fullscreen">
+            <span class="material-symbols-outlined text-lg">fullscreen</span>
+        </button>
+        <button class="hud-btn" id="exit-btn" title="Exit">
+            <span class="material-symbols-outlined text-lg">close</span>
+        </button>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const presentationId = urlParams.get('id');
+        
+        let slides = [];
+        let currentIndex = 0;
+        const socket = io();
+
+        const slideImage = document.getElementById('slide-image');
+        const loadingMsg = document.getElementById('loading-msg');
+        const slideCounter = document.getElementById('slide-counter');
+        const laserPointer = document.getElementById('laser-pointer');
+
+        if (!presentationId) {
+            loadingMsg.textContent = 'Error: No presentation ID specified.';
+            loadingMsg.style.color = '#ef4444';
+        } else {
+            fetch(`/api/ppt/slides/${presentationId}`)
+                .then(res => {
+                    if (!res.ok) throw new Error('Failed to load slides');
+                    return res.json();
+                })
+                .then(data => {
+                    slides = data;
+                    if (slides.length > 0) {
+                        socket.emit('set-total-slides', slides.length);
+                        showSlide(0);
+                    } else {
+                        loadingMsg.textContent = 'No slides found.';
+                    }
+                })
+                .catch(err => {
+                    loadingMsg.textContent = err.message;
+                    loadingMsg.style.color = '#ef4444';
+                });
+        }
+
+        function showSlide(index) {
+            if (index < 0 || index >= slides.length) return;
+            
+            currentIndex = index;
+            slideImage.classList.remove('active');
+            
+            setTimeout(() => {
+                loadingMsg.style.display = 'none';
+                slideImage.src = '/' + slides[currentIndex].image;
+                slideImage.onload = () => {
+                    slideImage.classList.add('active');
+                };
+                slideCounter.textContent = `${currentIndex + 1} / ${slides.length}`;
+            }, 150);
+        }
+
+        // Socket Events
+        socket.on('connect', () => {
+            if (slides.length > 0) {
+                socket.emit('set-total-slides', slides.length);
+            }
+        });
+
+        socket.on('state-update', (state) => {
+            if (state && typeof state.currentSlideIndex === 'number') {
+                if (state.currentSlideIndex !== currentIndex) {
+                    showSlide(state.currentSlideIndex);
+                }
+            }
+        });
+
+        socket.on('laser-moved', (data) => {
+            if (laserPointer.style.display !== 'none') {
+                // Using x and y as percentages (0 to 1) or coordinates. We assume standard 0-1 range sent from remote
+                let xPos = data.x;
+                let yPos = data.y;
+                
+                if (xPos <= 1 && yPos <= 1) {
+                    xPos *= window.innerWidth;
+                    yPos *= window.innerHeight;
+                } else {
+                    xPos = (xPos / 100) * window.innerWidth;
+                    yPos = (yPos / 100) * window.innerHeight;
+                }
+                
+                laserPointer.style.left = `${xPos}px`;
+                laserPointer.style.top = `${yPos}px`;
+            }
+        });
+
+        socket.on('laser-toggled', (active) => {
+            laserPointer.style.display = active ? 'block' : 'none';
+        });
+
+        // HUD Controls
+        document.getElementById('prev-btn').addEventListener('click', () => {
+            if (currentIndex > 0) {
+                socket.emit('prev-slide');
+            }
+        });
+
+        document.getElementById('next-btn').addEventListener('click', () => {
+            if (currentIndex < slides.length - 1) {
+                socket.emit('next-slide');
+            }
+        });
+
+        document.getElementById('fullscreen-btn').addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    console.error(`Error attempting to enable fullscreen: ${err.message}`);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+        document.getElementById('exit-btn').addEventListener('click', () => {
+            window.location.href = 'ppt-upload.html';
+        });
+
+        // Keyboard Navigation
+        document.addEventListener('keydown', (e) => {
+            if (['ArrowRight', 'Space', 'PageDown'].includes(e.code) || ['ArrowRight', ' ', 'PageDown'].includes(e.key)) {
+                e.preventDefault();
+                if (currentIndex < slides.length - 1) {
+                    socket.emit('next-slide');
+                }
+            } else if (['ArrowLeft', 'PageUp'].includes(e.code) || ['ArrowLeft', 'PageUp'].includes(e.key)) {
+                e.preventDefault();
+                if (currentIndex > 0) {
+                    socket.emit('prev-slide');
+                }
+            } else if (e.code === 'Escape' || e.key === 'Escape') {
+                if (!document.fullscreenElement) {
+                    window.location.href = 'ppt-upload.html';
+                }
+            }
+        });
+        
+        // Hide HUD when idle
+        let hudTimeout;
+        const hud = document.getElementById('hud');
+        function resetHudTimeout() {
+            hud.style.opacity = '1';
+            clearTimeout(hudTimeout);
+            hudTimeout = setTimeout(() => {
+                hud.style.opacity = '0';
+            }, 3000);
+        }
+        
+        document.addEventListener('mousemove', resetHudTimeout);
+        resetHudTimeout();
+    </script>
+</body>
+</html>
