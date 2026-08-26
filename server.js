@@ -79,6 +79,7 @@ function getLocalIPAddress() {
 }
 
 const remoteURL = `http://${getLocalIPAddress()}:${PORT}/remote.html`;
+
 // Helper to determine base URL from request (handles Render public URL)
 function getBaseURL(req) {
   const protocol = req.protocol || 'https';
@@ -100,7 +101,7 @@ app.get('/api/config', async (req, res) => {
       margin: 2,
     });
     res.json({
-      localIP: getLocalIPAddress(), // for ref
+      localIP: getLocalIPAddress(), // kept for reference
       port: PORT,
       remoteURL,
       qrCodeDataUrl,
@@ -208,30 +209,16 @@ io.on('connection', (socket) => {
   });
 });
 
+// ---------------------------------------------------
 // PPT upload & conversion (LibreOffice)
+// ---------------------------------------------------
 const pptUpload = upload.single('ppt');
 
-const convertCmd = `libreoffice --headless --convert-to png --outdir "${outDir}" "${srcPath}"`;
-  exec(convertCmd, { timeout: 180000 }, (err) => {
-    // Clean up uploaded source file
-    try { fs.unlinkSync(srcPath); } catch (_) {}
-    if (err) {
-      console.error('LibreOffice conversion error:', err);
-      return res.status(500).json({ error: 'Conversion failed. LibreOffice may not be installed on the server.' });
-    }
-    // LibreOffice creates PNG files directly in outDir
-    const files = fs.readdirSync(outDir)
-      .filter(f => /\.(png|jpg|jpeg)$/i.test(f))
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-    if (files.length === 0) {
-      return res.status(500).json({ error: 'Conversion produced no slides. Please ensure the file is a valid PowerPoint presentation.' });
-    }
-    const slides = files.map((file, idx) => ({ title: `Slide ${idx + 1}`, image: `ppt/${presentationId}/${file}` }));
-    const jsonPath = path.join(__dirname, 'public', 'ppt', `${presentationId}-slides.json`);
-    fs.writeFileSync(jsonPath, JSON.stringify(slides, null, 2), 'utf8');
-    res.json({ presentationId, slideCount: slides.length });
-  });
-
+app.post('/api/ppt/upload', pptUpload, (req, res) => {
+  console.log('--- Upload debug ---');
+  console.log('Headers:', req.headers);
+  console.log('req.file:', req.file);
+  console.log('req.body:', req.body);
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
@@ -244,57 +231,26 @@ const convertCmd = `libreoffice --headless --convert-to png --outdir "${outDir}"
   const outDir = path.join(__dirname, 'public', 'ppt', presentationId);
   fs.mkdirSync(outDir, { recursive: true });
 
-  // Rename uploaded file to have proper extension so PowerPoint can open it
+  // Rename uploaded file to have proper extension
   const srcPath = path.resolve(req.file.path + ext);
   fs.renameSync(req.file.path, srcPath);
 
-  // Build PowerShell script as a temp .ps1 file to avoid escaping nightmares
-  const psScript = `
-$ppt = New-Object -ComObject PowerPoint.Application
-try {
-  $pres = $ppt.Presentations.Open("${srcPath}", [Microsoft.Office.Core.MsoTriState]::msoFalse, [Microsoft.Office.Core.MsoTriState]::msoTrue, [Microsoft.Office.Core.MsoTriState]::msoFalse)
-  $pres.SaveAs("${outDir}", 17)
-  $pres.Close()
-} finally {
-  $ppt.Quit()
-  [System.Runtime.Interopservices.Marshal]::ReleaseComObject($ppt) | Out-Null
-}
-`;
-  const psScriptPath = path.join(__dirname, 'uploads', `convert_${presentationId}.ps1`);
-  fs.writeFileSync(psScriptPath, psScript, 'utf8');
-
-  exec(`powershell -NoProfile -ExecutionPolicy Bypass -File "${psScriptPath}"`, { timeout: 120000 }, (err) => {
-    // Clean up script file
-    try { fs.unlinkSync(psScriptPath); } catch(_) {}
-    try { fs.unlinkSync(srcPath); } catch(_) {}
-
+  // Convert using LibreOffice
+  const convertCmd = `libreoffice --headless --convert-to png --outdir "${outDir}" "${srcPath}"`;
+  exec(convertCmd, { timeout: 180000 }, (err) => {
+    // Clean up source file
+    try { fs.unlinkSync(srcPath); } catch (_) {}
     if (err) {
-      console.error('PowerPoint conversion error:', err);
-      return res.status(500).json({ error: 'Conversion failed. Make sure PowerPoint is installed.' });
+      console.error('LibreOffice conversion error:', err);
+      return res.status(500).json({ error: 'Conversion failed. LibreOffice may not be installed on the server.' });
     }
-
-    // PowerPoint SaveAs with format 17 (PNG) creates a subfolder, or puts PNGs directly in outDir
-    // Check if a subfolder was created
-    let pngDir = outDir;
-    const subdirs = fs.readdirSync(outDir).filter(f => fs.statSync(path.join(outDir, f)).isDirectory());
-    if (subdirs.length === 1) {
-      // Move PNGs from subfolder to outDir
-      const subPath = path.join(outDir, subdirs[0]);
-      const subFiles = fs.readdirSync(subPath);
-      for (const f of subFiles) {
-        fs.renameSync(path.join(subPath, f), path.join(outDir, f));
-      }
-      fs.rmdirSync(subPath);
-    }
-
+    // Gather PNG files
     const files = fs.readdirSync(outDir)
       .filter(f => /\.(png|jpg|jpeg)$/i.test(f))
       .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-
     if (files.length === 0) {
-      return res.status(500).json({ error: 'Conversion produced no slides. Please try again.' });
+      return res.status(500).json({ error: 'Conversion produced no slides. Please ensure the file is a valid PowerPoint presentation.' });
     }
-
     const slides = files.map((file, idx) => ({ title: `Slide ${idx + 1}`, image: `ppt/${presentationId}/${file}` }));
     const jsonPath = path.join(__dirname, 'public', 'ppt', `${presentationId}-slides.json`);
     fs.writeFileSync(jsonPath, JSON.stringify(slides, null, 2), 'utf8');
